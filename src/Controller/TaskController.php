@@ -9,52 +9,94 @@ use Symfony\Component\HttpFoundation\JsonResponse;
 use App\Entity\Task;
 use Symfony\Component\HttpFoundation\Request;
 use Doctrine\ORM\EntityManagerInterface;
+use OpenApi\Attributes as OA;
+use Nelmio\ApiDocBundle\Attribute\Model as AttributeModel;
+use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\Serializer\SerializerInterface;
 
 #[Route('/api/tasks', name: 'api_tasks_')]
 final class TaskController extends AbstractController
 {
     #[Route('', name: 'list', methods: ['GET'])]
-    public function index(TaskRepository $taskRepository): JsonResponse
+    #[OA\Response(
+        response: 200,
+        description: 'Returns the tasks list',
+        content: new OA\JsonContent(
+            type: 'array',
+            items: new OA\Items(ref: new AttributeModel(type: Task::class, groups: ['task:read']))
+        )
+    )]
+    public function index(EntityManagerInterface $entityManager, SerializerInterface $serializer): JsonResponse
     {
-        $tasks = $taskRepository->findAll();
+        $tasks = $entityManager->getRepository(Task::class)->findAll();
 
-        $data = array_map(fn(Task $task) => [
-            'id' => $task->getId(),
-            'title' => $task->getTitle(),
-            'description' => $task->getDescription(),
-            'status' => $task->getStatus(),
-            'created_at' => $task->getCreatedAt()->format('c'),
-            'user' => $task->getUser()?->getId(),
-        ], $tasks);
+        // $data = array_map(fn(Task $task) => [
+        //     'id' => $task->getId(),
+        //     'title' => $task->getTitle(),
+        //     'description' => $task->getDescription(),
+        //     'status' => $task->getStatus(),
+        //     'created_at' => $task->getCreatedAt()->format('c'),
+        //     'user' => $task->getUser()?->getId(),
+        // ], $tasks);
+        $data = $serializer->serialize($tasks, 'json', ['groups' => 'task:read']);
 
-        return new JsonResponse($data, 200);
+        return new JsonResponse($data, Response::HTTP_OK, [], true);
     }
 
     //AJOUTER
     #[Route('', name: 'addTask', methods: ['POST'])]
-    public function addTask(Request $request, EntityManagerInterface $em): JsonResponse
+    #[OA\Post]
+    #[OA\Response(
+        response: 201,
+        description: 'Return the created task',
+        content: new OA\JsonContent(
+            ref: new AttributeModel(type: Task::class, groups: ['task:read'])
+        )
+    )]
+    #[OA\RequestBody(
+        content: new OA\JsonContent(
+            properties: [
+                new OA\Property(property: 'title', type: 'string'),
+                new OA\Property(property: 'description', type: 'string'),
+                new OA\Property(property: 'status', type: 'string'),]
+        )
+    )]
+    public function addTask(Request $request, EntityManagerInterface $entityManager, SerializerInterface $serializer): JsonResponse
     {
-        $this->denyAccessUnlessGranted('IS_AUTHENTICATED_FULLY');
+        $task = $serializer->deserialize($request->getContent(), Task::class, 'json');
 
-        $data = json_decode($request->getContent(), true);
-
-        $task = new Task();
-        $task->setTitle($data['title'] ?? '');
-        $task->setDescription($data['description'] ?? null);
-        $task->setStatus($data['status'] ?? 'todo');
         $task->setUser($this->getUser());
 
-        $em->persist($task);
-        $em->flush();
+        $entityManager->persist($task);
+        $entityManager->flush();
 
-        return new JsonResponse(['id' => $task->getId()], 201);
+        $data = $serializer->serialize($task, 'json', ['groups' => 'task:read']);
+
+
+        return new JsonResponse($data, Response::HTTP_CREATED, [], true);
     }
 
     //MODIFIER
     #[Route('/{id}', name: 'editTask', methods: ['PUT'])]
-    public function editTask(Request $request, EntityManagerInterface $entityManager, int $id): JsonResponse
+    #[OA\Put]
+    #[OA\Response(
+        response: 200,
+        description: 'Return the updated task',
+        content: new OA\JsonContent(
+            ref: new AttributeModel(type: Task::class, groups: ['task:read'])
+        )
+    )]
+    #[OA\RequestBody(
+        content: new OA\JsonContent(
+            properties: [
+                new OA\Property(property: 'title', type: 'string'),
+                new OA\Property(property: 'description', type: 'string'),
+                new OA\Property(property: 'status', type: 'string'),
+            ]
+        )
+    )]
+    public function editTask(Request $request, EntityManagerInterface $entityManager, SerializerInterface $serializer, int $id): JsonResponse
     {
-        $this->denyAccessUnlessGranted('IS_AUTHENTICATED_FULLY');
 
         $task = $entityManager->find(Task::class, $id);
 
@@ -62,19 +104,23 @@ final class TaskController extends AbstractController
             return new JsonResponse(['message' => 'Task not found'], JsonResponse::HTTP_NOT_FOUND);
         }
 
-        $data = json_decode($request->getContent(), true);
+        $updatedTask= $serializer->deserialize($request->getContent(), Task::class, 'json', ['object_to_populate' => $task]);
 
-        $task->setTitle($data['title'] ?? $task->getTitle());
-        $task->setDescription($data['description'] ?? $task->getDescription());
-        $task->setStatus($data['status'] ?? $task->getStatus());
-
+        $entityManager->persist($task);
         $entityManager->flush();
+        
+        $data = $serializer->serialize($updatedTask, 'json', ['groups' => 'task:read']);
 
-        return new JsonResponse(['message' => 'Task updated successfully'], JsonResponse::HTTP_OK);
+
+        return new JsonResponse($data, Response::HTTP_OK, [], true);
     }
 
     //SUPPRIMER
     #[Route('/{id}', name: 'deleteTask', methods: ['DELETE'])]
+    #[OA\Response(
+        response: 204,
+        description: 'Task deleted successfully',
+    )]
     public function deleteTask(EntityManagerInterface $entityManager, int $id): JsonResponse
     {
 
